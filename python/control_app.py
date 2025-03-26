@@ -8,6 +8,8 @@ import threading
 import time
 from tcp_common import ProtocolHeader
 import numpy as np
+import boost.python as bp
+from data_record_config_msg import DataRecordConfigMsgHandler, DataRecordConfigMsg, Header
 
 
 class ControlApp(QMainWindow):
@@ -24,6 +26,7 @@ class ControlApp(QMainWindow):
         ]
         self.is_toggle_on = False
         self.event_sent = False
+        self.message_counter = 0
         
         # Create central widget and layout
         central_widget = QWidget()
@@ -172,79 +175,48 @@ class ControlApp(QMainWindow):
         
     def connect_to_server(self):
         all_connected = True
-        message_setter = ProtocolHeader()
+        message_handler = DataRecordConfigMsgHandler()
         
         # 각 백엔드에 대해
         for i, backend in enumerate(self.backends):
-            # 첫 번째 메시지 교환 (1 -> 2) - 모든 포트에 대해
-            for j, port in enumerate(backend["ports"]):
-                if backend["sockets"][j] is not None:
-                    continue
+            prev_counter = self.message_counter
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(0.5)
+                s.connect((backend["host"], backend["ports"][0]))
+
+                # First message (MessageType 1)
+                self.message_counter += 1
+                first_msg = Header(time.time_ns(), 1, self.message_counter, 0)
+                s.sendall(first_msg.tobytes())
+                response_data = s.recv(24)
+                response = Header.from_bytes(response_data)
+                if response.message_type != 2:
+                    raise Exception(f"Expected MessageType 2, got {response.message_type}")
                 
-                try:
-                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    s.settimeout(0.5)
-                    s.connect((backend["host"], port))
-                    
-                    # 메시지 1 전송 및 응답 2 수신
-                    first_message = message_setter.get_header_message(time.time_ns(), 1, 1, 0)
-                    s.sendall(first_message.tobytes())
-                    
-                    response_data = s.recv(message_setter.header_type.itemsize)
-                    response = np.frombuffer(response_data, dtype=message_setter.header_type)[0]
-                    
-                    if response['BodyLength'] > 0:
-                        body_data = s.recv(response['BodyLength'])
-                    
-                    if response['MessageType'] != 2:
-                        raise Exception(f"Expected MessageType 2, got {response['MessageType']}")
-                    
-                    backend["sockets"][j] = s
-                    
-                except Exception as e:
-                    print(f"Error with {backend['name']}:{port}: {e}")
-                    all_connected = False
-                    self.status_labels[i].setText(f"{backend['name']}: Not Connected")
-                    self.status_labels[i].setStyleSheet("color: red; font-size: 32px;")
-                    if 's' in locals():
-                        s.close()
-                    continue
+                # Second message (MessageType 3)
+                self.message_counter += 1
+                second_msg = Header(time.time_ns(), 3, self.message_counter, 0)
+                s.sendall(second_msg.tobytes())
+                response_data = s.recv(24)
+                response = Header.from_bytes(response_data)
+                if response.message_type != 4:
+                    raise Exception(f"Expected MessageType 2, got {response.message_type}")
+
+                backend["ready"] = True
+                self.status_labels[i].setText(f"{backend['name']}: Connected")
+                self.status_labels[i].setStyleSheet("color: green; font-size: 32px;")
+                
+            except Exception as e:
+                print(f"Error with {backend['name']}:{backend['ports'][0]}: {e}")
+                all_connected = False
+                self.status_labels[i].setText(f"{backend['name']}: Not Connected")
+                self.status_labels[i].setStyleSheet("color: red; font-size: 32px;")
+                if 's' in locals():
+                    s.close()
+                self.message_counter = prev_counter
+                continue
             
-            # 두 번째 메시지 교환 (3 -> 4) - 모든 포트에 대해
-            if all(backend["sockets"][j] is not None for j in range(len(backend["ports"]))):
-                try:
-                    for j, port in enumerate(backend["ports"]):
-                        s = backend["sockets"][j]
-                        
-                        # 메시지 3 전송 및 응답 4 수신
-                        second_message = message_setter.get_header_message(time.time_ns(), 3, 2, 0)
-                        s.sendall(second_message.tobytes())
-                        
-                        response_data = s.recv(message_setter.header_type.itemsize)
-                        response = np.frombuffer(response_data, dtype=message_setter.header_type)[0]
-                        
-                        if response['BodyLength'] > 0:
-                            body_data = s.recv(response['BodyLength'])
-                        
-                        if response['MessageType'] != 4:
-                            raise Exception(f"Expected MessageType 4, got {response['MessageType']}")
-                    
-                    # 모든 포트에 대한 두 번째 메시지 교환이 성공하면 연결 성공 처리
-                    backend["ready"] = True
-                    self.status_labels[i].setText(f"{backend['name']}: Connected")
-                    self.status_labels[i].setStyleSheet("color: green; font-size: 32px;")
-                    
-                except Exception as e:
-                    print(f"Error with {backend['name']} second message exchange: {e}")
-                    all_connected = False
-                    self.status_labels[i].setText(f"{backend['name']}: Not Connected")
-                    self.status_labels[i].setStyleSheet("color: red; font-size: 32px;")
-                    # 에러 발생 시 모든 소켓 닫기
-                    for socket in backend["sockets"]:
-                        if socket is not None:
-                            socket.close()
-                    backend["sockets"] = [None] * len(backend["ports"])
-        
         if all_connected and all(backend["ready"] for backend in self.backends):
             self.status_timer.stop()
             self.event_sent = False
@@ -280,13 +252,49 @@ class ControlApp(QMainWindow):
             (screen.height() - size.height()) // 2
         )
         
-    def send_tcp_message(self, message):
-        # TCP 메시지 전송 로직 구현 필요
-        pass
+    def set_message_content(self, message):
+        message.BodyLength = 0
+        return message
+
+    def send_tcp_message(self, start=True):
+        message_handler = DataRecordConfigMsgHandler()
+        
+        if start:
+            self.message_counter += 1
+            config_msg = DataRecordConfigMsg(
+                header=Header(time.time_ns(), 19, self.message_counter, 0),
+                logging_directory_path="",
+                logging_mode=np.uint32(0),
+                history_time=np.uint32(0),
+                follow_time=np.uint32(0),
+                split_time=np.uint32(0),
+                data_length=np.uint32(0),
+                logging_file_list=[],
+                meta_data={"data": {}, "issue": ""}
+            )
+        else:
+            self.message_counter += 1
+            config_msg = DataRecordConfigMsg(
+                header=Header(time.time_ns(), 24, self.message_counter, 0),
+                logging_directory_path="",
+                logging_mode=np.uint32(0),
+                history_time=np.uint32(0),
+                follow_time=np.uint32(0),
+                split_time=np.uint32(0),
+                data_length=np.uint32(0),
+                logging_file_list=[],
+                meta_data={"data": {}, "issue": ""}
+            )
+            
+        serialized_data = message_handler.make_package(config_msg)
+        
+        for backend in self.backends:
+            if backend["ready"]:
+                backend["sockets"][1].sendall(serialized_data)
     
     def toggle_action(self):
         if not self.is_toggle_on:  # Sending START
-            success, failed_backends = self.send_tcp_message("START")
+            success, failed_backends = self.send_tcp_message()
             if success:
                 self.toggle_btn.setText("End")
                 self.toggle_btn.setStyleSheet("""
@@ -327,7 +335,7 @@ class ControlApp(QMainWindow):
                 self.is_toggle_on = False
                 self.event_btn.setEnabled(True)  # Enable event button if START fails
         else:  # Sending END
-            success, _ = self.send_tcp_message("END")
+            success, _ = self.send_tcp_message(start=False)
             if success:
                 self.toggle_btn.setText("Start")
                 self.toggle_btn.setStyleSheet("""
