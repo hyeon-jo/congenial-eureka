@@ -9,7 +9,7 @@ import struct
 class ProtocolHeader:
     """Base protocol header structure"""
     timestamp: np.uint64
-    message_type: np.uint32
+    message_type: np.uint8
     sequence_number: np.uint64
     body_length: np.uint32
 
@@ -36,7 +36,7 @@ class LoggingMsg:
 class Header:
     """Header structure for data record configuration"""
     timestamp: np.uint64
-    message_type: np.uint32
+    message_type: np.uint8
     sequence_number: np.uint64
     body_length: np.uint32
 
@@ -161,7 +161,7 @@ class DataRecordConfigMsgHandler:
 
     def get_package_size(self) -> np.uint32:
         """Calculate the total package size including header and body"""
-        header_size = 24  # Size of ProtocolHeader (8 + 4 + 8 + 4 bytes)
+        header_size = 21  # Size of ProtocolHeader (8 + 4 + 8 + 4 bytes)
         body_size = self.calculate_body_size()
         return np.uint32(header_size + body_size)
 
@@ -237,10 +237,10 @@ class DataRecordConfigMsgHandler:
     def parsing_data(self, data: bytes) -> DataRecordConfigMsg:
         """Deserialize the message from bytes"""
         # First parse the header
-        header = ProtocolHeader.from_bytes(data[:24])
+        header = ProtocolHeader.from_bytes(data[:21])
         
         # Then parse the body
-        body_data = data[24:]
+        body_data = data[21:]
         msg = self.deserialize_body(body_data)
         msg.header = header
         return msg

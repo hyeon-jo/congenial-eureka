@@ -189,7 +189,7 @@ class ControlApp(QMainWindow):
                 self.message_counter += 1
                 first_msg = Header(time.time_ns(), 1, self.message_counter, 0)
                 s.sendall(first_msg.tobytes())
-                response_data = s.recv(24)
+                response_data = s.recv(21)
                 response = Header.from_bytes(response_data)
                 if response.message_type != 2:
                     raise Exception(f"Expected MessageType 2, got {response.message_type}")
@@ -198,7 +198,7 @@ class ControlApp(QMainWindow):
                 self.message_counter += 1
                 second_msg = Header(time.time_ns(), 3, self.message_counter, 0)
                 s.sendall(second_msg.tobytes())
-                response_data = s.recv(24)
+                response_data = s.recv(21)
                 response = Header.from_bytes(response_data)
                 if response.message_type != 4:
                     raise Exception(f"Expected MessageType 2, got {response.message_type}")
@@ -275,7 +275,7 @@ class ControlApp(QMainWindow):
         else:
             self.message_counter += 1
             config_msg = DataRecordConfigMsg(
-                header=Header(time.time_ns(), 24, self.message_counter, 0),
+                header=Header(time.time_ns(), 21, self.message_counter, 0),
                 logging_directory_path="",
                 logging_mode=np.uint32(0),
                 history_time=np.uint32(0),
@@ -285,6 +285,10 @@ class ControlApp(QMainWindow):
                 logging_file_list=[],
                 meta_data={"data": {}, "issue": ""}
             )
+            
+        # Calculate body length
+        body_size = message_handler.calculate_body_size()
+        config_msg.header.body_length = np.uint32(body_size)
             
         serialized_data = message_handler.make_package(config_msg)
         
