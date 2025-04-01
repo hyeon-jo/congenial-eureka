@@ -182,7 +182,6 @@ class ControlApp(QMainWindow):
             prev_counter = self.message_counter
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.settimeout(0.5)
                 s.connect((backend["host"], backend["ports"][0]))
 
                 # First message (MessageType 1)
@@ -206,6 +205,7 @@ class ControlApp(QMainWindow):
                 backend["ready"] = True
                 self.status_labels[i].setText(f"{backend['name']}: Connected")
                 self.status_labels[i].setStyleSheet("color: green; font-size: 32px;")
+                backend["sockets"][0] = s
                 
             except Exception as e:
                 print(f"Error with {backend['name']}:{backend['ports'][0]}: {e}")
@@ -222,6 +222,10 @@ class ControlApp(QMainWindow):
             self.event_sent = False
             self.event_btn.setEnabled(True)
             self.toggle_btn.setEnabled(True)
+
+            for backend in self.backends:
+                backend["sockets"][1] = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                backend["sockets"][1].connect((backend["host"], backend["ports"][1]))
             print("All backends connected successfully")
             return True
         
@@ -236,11 +240,15 @@ class ControlApp(QMainWindow):
                     raise ValueError(f"{backend['name']}: IP address cannot be empty")
                 
                 # Update backend configuration
-                self.backends[i]['host'] = ip
+                backend['host'] = ip
+                for sock in backend['sockets']:
+                    sock = None
                 
             except ValueError as e:
                 QMessageBox.warning(self, "Configuration Error", str(e))
                 return
+            
+        self.connect_to_server()
         
         QMessageBox.information(self, "Success", "Configuration applied successfully")
 
@@ -270,7 +278,7 @@ class ControlApp(QMainWindow):
                 split_time=np.uint32(0),
                 data_length=np.uint32(0),
                 logging_file_list=[],
-                meta_data={"data": {}, "issue": ""}
+                meta_data={"data": {"a": "a", "b": "b"}, "issue": ""}
             )
         else:
             self.message_counter += 1
@@ -283,7 +291,7 @@ class ControlApp(QMainWindow):
                 split_time=np.uint32(0),
                 data_length=np.uint32(0),
                 logging_file_list=[],
-                meta_data={"data": {}, "issue": ""}
+                meta_data={"data": {"a": "a", "b": "b"}, "issue": ""}
             )
             
         # Calculate body length
